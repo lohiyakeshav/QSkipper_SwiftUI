@@ -60,6 +60,11 @@ class StoreKitManager: ObservableObject {
             
             if storeProducts.isEmpty {
                 print("⚠️ StoreKitManager: Warning - No products were returned by StoreKit")
+                print("⚠️ StoreKitManager: This might be because:")
+                print("   - Products aren't properly configured in App Store Connect")
+                print("   - The app's Bundle ID doesn't match the one in App Store Connect")
+                print("   - The StoreKit configuration is incorrect")
+                print("   - There's a network issue connecting to App Store servers")
             }
             
             for product in storeProducts {
@@ -79,7 +84,38 @@ class StoreKitManager: ObservableObject {
         } catch {
             print("❌ StoreKitManager: Failed to load store products: \(error)")
             print("❌ StoreKitManager: Error description: \(error.localizedDescription)")
+            print("❌ StoreKitManager: Error domain: \((error as NSError).domain)")
+            print("❌ StoreKitManager: Error code: \((error as NSError).code)")
         }
+    }
+    
+    // Force reload products - use this if you suspect the products didn't load correctly
+    func forceReloadProducts() async {
+        print("🔄 StoreKitManager: Force reloading products...")
+        hasLoadedProducts = false
+        await loadStoreProducts()
+    }
+    
+    // Debug method to print all available products
+    func debugPrintAllProducts() {
+        print("🔍 STOREKIT PRODUCTS DEBUG INFO:")
+        print("=================================")
+        print("Total available products: \(availableProducts.count)")
+        
+        if availableProducts.isEmpty {
+            print("❌ NO PRODUCTS AVAILABLE")
+            print("Try calling forceReloadProducts() to reload")
+        } else {
+            for (index, product) in availableProducts.enumerated() {
+                print("PRODUCT #\(index + 1):")
+                print("   ID: \(product.id)")
+                print("   Display Name: \(product.displayName)")
+                print("   Price: \(product.displayPrice)")
+                print("   Type: \(product.type)")
+                print("   -----------------")
+            }
+        }
+        print("=================================")
     }
     
     // Process payment with optional custom amount

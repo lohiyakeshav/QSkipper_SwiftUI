@@ -140,6 +140,21 @@ struct CartView: View {
             }
         }
         .onAppear {
+            print("🛒 CartView: Appeared")
+            // Debug StoreKit products
+            print("🛒 CartView: Debugging StoreKit products")
+            StoreKitManager.shared.debugPrintAllProducts()
+            
+            // Force reload products if none are available
+            if StoreKitManager.shared.availableProducts.isEmpty {
+                print("🛒 CartView: No products available, forcing reload")
+                Task {
+                    await StoreKitManager.shared.forceReloadProducts()
+                    print("🛒 CartView: Products reloaded")
+                    StoreKitManager.shared.debugPrintAllProducts()
+                }
+            }
+            
             // Load restaurant details
             controller.loadRestaurantDetails()
             // Hide tab bar when view appears

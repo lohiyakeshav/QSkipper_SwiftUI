@@ -9,26 +9,35 @@ import Foundation
 import SwiftUI
 import StoreKit
 
-// Controller for handling cart view logic
-class CartViewController: ObservableObject {
-    private let orderManager: OrderManager
-    @Published var isProcessing = false
-    
-    @Published var showOrderSuccess = false
-    @Published var showPaymentConfirmation = false
-    @Published var isSchedulingOrder = false
-    @Published var scheduledDate = Date().addingTimeInterval(3600) // Default to 1 hour from now
-    @Published var showSchedulePicker = false
-    @Published var selectedTipAmount: Int = 18
-    @Published var showPaymentView = false
-    @Published var currentOrderRequest: PlaceOrderRequest?
-    @Published var orderId: String? = nil
-    let tipOptions = [12, 18, 25]
-    
+// Add SKPaymentTransactionObserver as a fallback
+class CartViewController: NSObject, ObservableObject, SKPaymentTransactionObserver {
+    // MARK: - Published Properties
     @Published var restaurant: Restaurant?
+    @Published var selectedTipAmount: Double = 0
+    @Published var isSchedulingOrder = false
+    @Published var scheduledDate = Date()
+    @Published var showSchedulePicker = false
+    @Published var showPaymentView = false
+    @Published var showOrderSuccess = false
+    @Published var orderId: String?
+    @Published var isProcessing = false
+    @Published var currentOrderRequest: PlaceOrderRequest?
     
+    // Transaction observers for older StoreKit 1
+    private var productID = "com.qskipper.premium"
+    
+    // MARK: - Dependencies
+    private var orderManager: OrderManager
+    
+    // MARK: - Initialization
     init(orderManager: OrderManager = OrderManager.shared) {
         self.orderManager = orderManager
+        
+        // Call super.init before using self
+        super.init()
+        
+        // Now we can use self
+        SKPaymentQueue.default().add(self)
         self.loadRestaurantDetails()
         
         // Observe cart changes to update restaurant details
@@ -36,6 +45,8 @@ class CartViewController: ObservableObject {
     }
     
     deinit {
+        // Remove observer when controller is deallocated
+        SKPaymentQueue.default().remove(self)
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -102,21 +113,90 @@ class CartViewController: ObservableObject {
         }
     }
     
+    // MARK: - Transaction Observer Methods (StoreKit 1)
+    func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
+        for transaction in transactions {
+            switch transaction.transactionState {
+            case .purchased:
+                // Handle successful purchase
+                print("✅ StoreKit 1: Transaction successful for \(transaction.payment.productIdentifier)")
+                
+                // Complete the transaction
+                SKPaymentQueue.default().finishTransaction(transaction)
+                
+                // Process the order if we have a request
+                if let orderRequest = self.currentOrderRequest {
+                    Task {
+                        do {
+                            try await submitOrderToAPI(orderRequest: orderRequest)
+                        } catch {
+                            print("❌ StoreKit 1: Failed to submit order after transaction: \(error.localizedDescription)")
+                        }
+                    }
+                }
+                
+            case .failed:
+                if let error = transaction.error {
+                    print("❌ StoreKit 1: Transaction failed with error: \(error.localizedDescription)")
+                } else {
+                    print("❌ StoreKit 1: Transaction failed without error information")
+                }
+                SKPaymentQueue.default().finishTransaction(transaction)
+                
+                Task { @MainActor in
+                    self.isProcessing = false
+                }
+                
+            case .restored:
+                print("ℹ️ StoreKit 1: Transaction restored")
+                SKPaymentQueue.default().finishTransaction(transaction)
+                
+            case .deferred:
+                print("⏳ StoreKit 1: Transaction deferred")
+                
+            case .purchasing:
+                print("🔄 StoreKit 1: Transaction in progress")
+                
+            @unknown default:
+                print("❓ StoreKit 1: Unknown transaction state")
+            }
+        }
+    }
+    
+    // MARK: - StoreKit 1 Payment Method (Fallback)
+    func makeLegacyPurchase() {
+        print("🔄 CartViewController: Attempting StoreKit 1 purchase as fallback")
+        
+        guard SKPaymentQueue.canMakePayments() else {
+            print("❌ StoreKit 1: User cannot make payments")
+            return
+        }
+        
+        let paymentRequest = SKMutablePayment()
+        paymentRequest.productIdentifier = productID
+        SKPaymentQueue.default().add(paymentRequest)
+    }
+    
     // Process order payment
     func placeOrder() {
+        print("🔄 CartViewController: placeOrder() called - Starting transaction process")
         Task { @MainActor in
-            print("🔄 CartViewController: Starting place order process...")
+            print("🔄 CartViewController: Starting place order process inside Task...")
             self.isProcessing = true
             
             // Validate user
             guard let userId = UserDefaultsManager.shared.getUserId(),
                   let firstItem = orderManager.currentCart.first else {
-                print("❌ Missing user or cart data.")
+                print("❌ CartViewController: Missing user or cart data.")
                 self.isProcessing = false
                 return
             }
+            
+            print("✅ CartViewController: User validation successful - UserId: \(userId)")
+            print("📦 CartViewController: First cart item: \(firstItem.product.name)")
 
             let restaurantId = firstItem.product.restaurantId
+            print("🏪 CartViewController: Restaurant ID: \(restaurantId)")
 
             let orderRequest = PlaceOrderRequest(
                 userId: userId,
@@ -135,56 +215,75 @@ class CartViewController: ObservableObject {
                 specialInstructions: nil
             )
             
+            print("📝 CartViewController: Order request created with \(orderRequest.items.count) items, total amount: \(orderRequest.totalAmount)")
             self.currentOrderRequest = orderRequest
 
-            // 🔐 Sandbox: Use StoreKit2 to simulate payment
-            guard let orderProduct = StoreKitManager.shared.getProduct(byID: "com.qskipper.premium") else {
-                print("❌ StoreKit product not found.")
-                self.isProcessing = false
-                self.showPaymentView = true
-                return
-            }
+            // First try StoreKit 2
+            print("🔍 CartViewController: Attempting to retrieve StoreKit2 product 'com.qskipper.premium'")
+            let product = StoreKitManager.shared.getProduct(byID: "com.qskipper.premium")
+            
+            if let orderProduct = product {
+                print("✅ CartViewController: Found StoreKit product: \(orderProduct.id), displayName: \(orderProduct.displayName), price: \(orderProduct.displayPrice)")
+                
+                do {
+                    print("🧪 StoreKit2: Attempting to purchase in sandbox...")
+                    let result = try await orderProduct.purchase()
+                    print("✅ StoreKit2: Purchase method returned with result: \(result)")
 
-            do {
-                print("🧪 StoreKit: Attempting to purchase in sandbox...")
-                let result = try await orderProduct.purchase()
+                    switch result {
+                    case .success(let verification):
+                        print("🔐 StoreKit2: Success path entered, verification result received")
+                        switch verification {
+                        case .unverified(_, let error):
+                            print("⚠️ Transaction unverified: \(error.localizedDescription)")
+                            self.isProcessing = false
+                            return
 
-                switch result {
-                case .success(let verification):
-                    switch verification {
-                    case .unverified(_, let error):
-                        print("⚠️ Transaction unverified: \(error.localizedDescription)")
+                        case .verified(let transaction):
+                            print("✅ StoreKit2 transaction verified!")
+                            print("   - Transaction ID: \(transaction.id)")
+                            print("   - Product ID: \(transaction.productID)")
+                            
+                            await transaction.finish()
+                            print("✅ Transaction finished")
+                            
+                            print("🌐 Submitting order to API...")
+                            try await submitOrderToAPI(orderRequest: orderRequest)
+                        }
+
+                    case .userCancelled:
+                        print("🚫 Payment cancelled by user.")
                         self.isProcessing = false
                         return
 
-                    case .verified(let transaction):
-                        print("✅ StoreKit transaction verified!")
-                        print("   - Transaction ID: \(transaction.id)")
-                        print("   - Product ID: \(transaction.productID)")
-                        
-                        await transaction.finish()
-                        
-                        try await submitOrderToAPI(orderRequest: orderRequest)
+                    case .pending:
+                        print("⏳ Payment is pending...")
+                        self.isProcessing = false
+                        return
+
+                    @unknown default:
+                        print("❓ Unknown result during purchase.")
+                        self.isProcessing = false
+                        return
                     }
-
-                case .userCancelled:
-                    print("🚫 Payment cancelled by user.")
-                    self.isProcessing = false
-                    return
-
-                case .pending:
-                    print("⏳ Payment is pending...")
-                    self.isProcessing = false
-                    return
-
-                @unknown default:
-                    print("❓ Unknown result during purchase.")
-                    self.isProcessing = false
-                    return
+                } catch {
+                    print("❌ StoreKit2 purchase failed with error: \(error)")
+                    print("   - Error localized description: \(error.localizedDescription)")
+                    print("   - Error domain: \((error as NSError).domain)")
+                    print("   - Error code: \((error as NSError).code)")
+                    if let underlyingError = (error as NSError).userInfo[NSUnderlyingErrorKey] as? Error {
+                        print("   - Underlying error: \(underlyingError)")
+                    }
+                    
+                    // If StoreKit 2 fails, try StoreKit 1 as fallback
+                    print("🔄 Falling back to StoreKit 1 approach...")
+                    makeLegacyPurchase()
                 }
-            } catch {
-                print("❌ StoreKit purchase failed: \(error.localizedDescription)")
-                self.isProcessing = false
+            } else {
+                print("❌ CartViewController: StoreKit2 product NOT FOUND for ID: com.qskipper.premium")
+                print("🧩 CartViewController: Available products: \(StoreKitManager.shared.availableProducts.map { $0.id })")
+                print("🔄 Falling back to StoreKit 1 approach...")
+                makeLegacyPurchase()
             }
         }
     }

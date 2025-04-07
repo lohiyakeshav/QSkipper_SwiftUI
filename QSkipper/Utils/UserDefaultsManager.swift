@@ -73,27 +73,45 @@ class UserDefaultsManager {
         return userDefaults.string(forKey: userPhoneKey)
     }
     
-    func setUserLoggedIn(_ isLoggedIn: Bool) {
-        userDefaults.set(isLoggedIn, forKey: isLoggedInKey)
+    func isUserLoggedIn() -> Bool {
+        let isLoggedIn = UserDefaults.standard.bool(forKey: "user_logged_in")
+        print("📝 UserDefaultsManager.isUserLoggedIn() = \(isLoggedIn)")
+        return isLoggedIn
     }
     
-    func isUserLoggedIn() -> Bool {
-        return userDefaults.bool(forKey: isLoggedInKey)
+    func setUserLoggedIn(_ value: Bool) {
+        print("📝 UserDefaultsManager.setUserLoggedIn(\(value))")
+        UserDefaults.standard.set(value, forKey: "user_logged_in")
+        UserDefaults.standard.synchronize()
     }
     
     func saveUser(_ user: User) {
-        saveUserId(user.id)
-        saveUserEmail(user.email)
-        if let name = user.name {
-            saveUserName(name)
-        }
-        if let phone = user.phone {
-            saveUserPhone(phone)
-        }
-        if let token = user.token {
-            saveUserToken(token)
-        }
+        print("📝 UserDefaultsManager - saveUser called with:")
+        print("• ID: \(user.id)")
+        print("• Email: \(user.email)")
+        print("• Name: \(user.name ?? "nil")")
+        print("• Token: \(user.token != nil ? "Present (\(user.token!.count) chars)" : "nil")")
+        
+        // Save individual user properties
+        UserDefaults.standard.set(user.id, forKey: "user_id")
+        UserDefaults.standard.set(user.email, forKey: "user_email")
+        UserDefaults.standard.set(user.name, forKey: "user_name")
+        UserDefaults.standard.set(user.phone, forKey: "user_phone")
+        UserDefaults.standard.set(user.token, forKey: "user_token")
+        
+        // Set logged in status to true
         setUserLoggedIn(true)
+        
+        // Force synchronize to ensure data is saved immediately
+        UserDefaults.standard.synchronize()
+        
+        // Verify data was saved correctly
+        print("📝 UserDefaultsManager - Verification after save:")
+        print("• Stored ID: \(UserDefaults.standard.string(forKey: "user_id") ?? "nil")")
+        print("• Stored Email: \(UserDefaults.standard.string(forKey: "user_email") ?? "nil")")
+        print("📱 UserDefaultsManager.getUserName() called, key=user_name, value=\(UserDefaults.standard.string(forKey: "user_name") ?? "nil")")
+        print("• Stored Name: \(UserDefaults.standard.string(forKey: "user_name") ?? "nil")")
+        print("• isLoggedIn: \(UserDefaults.standard.bool(forKey: "user_logged_in"))")
     }
     
     func savePartialUser(id: String, email: String, username: String) {
@@ -103,11 +121,28 @@ class UserDefaultsManager {
         // Don't set logged in here - only after OTP is verified
     }
     
-    // Clear all user-related data
+    // Clear all user session data
     func clearUserData() {
-        for key in [userIdKey, userEmailKey, userNameKey, userPhoneKey, tokenKey] {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-        setUserLoggedIn(false)
+        print("📝 UserDefaultsManager - clearUserData called")
+        
+        // Session data - always remove these
+        UserDefaults.standard.removeObject(forKey: "user_id")
+        UserDefaults.standard.removeObject(forKey: "user_name")
+        UserDefaults.standard.removeObject(forKey: "user_email")
+        UserDefaults.standard.removeObject(forKey: "user_phone")
+        UserDefaults.standard.removeObject(forKey: "user_token")
+        UserDefaults.standard.removeObject(forKey: "user_logged_in")
+        
+        // Clean up any other temporary session-related data
+        UserDefaults.standard.removeObject(forKey: "user_cart")
+        UserDefaults.standard.removeObject(forKey: "selected_payment_method")
+        
+        // Note: We're NOT removing apple_real_email_* or apple_real_name_* keys
+        // as those are tied to the Apple ID and needed for future sign-ins
+        
+        print("📝 UserDefaultsManager - Session data cleared successfully")
+        
+        // Force synchronize to make sure changes are saved immediately
+        UserDefaults.standard.synchronize()
     }
 } 

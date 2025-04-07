@@ -43,6 +43,102 @@ class SimpleNetworkManager {
     
     private init() {}
     
+    // Add function to handle dictionary responses
+    func makeRequest(url: String, method: String = "GET", body: Data? = nil) async throws -> [String: Any] {
+        guard let url = URL(string: url) else {
+            throw SimpleNetworkError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 60 // Increase timeout to 60 seconds
+        
+        if let body = body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        
+        // Add retry logic
+        let maxRetries = 3
+        var lastError: Error?
+        
+        for attempt in 1...maxRetries {
+            do {
+                print("🔄 SimpleNetworkManager: Request attempt \(attempt)/\(maxRetries) to \(url.absoluteString)")
+                if let body = body, let bodyString = String(data: body, encoding: .utf8) {
+                    print("📤 Request body: \(bodyString)")
+                }
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw SimpleNetworkError.invalidResponse
+                }
+                
+                print("📥 SimpleNetworkManager: Response status code: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode >= 400 {
+                    print("❌ SimpleNetworkManager: HTTP error \(httpResponse.statusCode)")
+                    if let responseText = String(data: data, encoding: .utf8) {
+                        print("📥 Error response: \(responseText)")
+                    }
+                    throw SimpleNetworkError.serverError(httpResponse.statusCode, data)
+                }
+                
+                do {
+                    print("📥 SimpleNetworkManager: Parsing JSON response...")
+                    if let responseText = String(data: data, encoding: .utf8) {
+                        print("📥 Response data: \(responseText)")
+                    }
+                    
+                    guard let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        throw SimpleNetworkError.decodingFailed(NSError(domain: "JSONParsing", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse JSON as dictionary"]))
+                    }
+                    
+                    return jsonObject
+                } catch {
+                    print("❌ SimpleNetworkManager: JSON parsing error: \(error)")
+                    throw SimpleNetworkError.decodingFailed(error)
+                }
+            } catch let urlError as URLError where urlError.code == .timedOut {
+                lastError = urlError
+                print("⏱️ SimpleNetworkManager: Request timed out (attempt \(attempt)/\(maxRetries))")
+                
+                if attempt < maxRetries {
+                    // Exponential backoff for retries
+                    let delay = min(pow(2.0, Double(attempt - 1)), 8) // 1, 2, 4, 8 seconds
+                    print("⏱️ Waiting \(delay) seconds before retry...")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            } catch {
+                // For other errors, check if they're retryable
+                lastError = error
+                print("❌ SimpleNetworkManager: Request failed with error: \(error.localizedDescription)")
+                
+                // Only retry for certain network errors
+                if let urlError = error as? URLError, 
+                   [.notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost].contains(urlError.code),
+                   attempt < maxRetries {
+                    
+                    let delay = min(pow(2.0, Double(attempt - 1)), 8)
+                    print("⏱️ Waiting \(delay) seconds before retry...")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                } else {
+                    // Non-retryable error, throw immediately
+                    throw error
+                }
+            }
+        }
+        
+        // If we reach here, all retries failed
+        if let urlError = lastError as? URLError, urlError.code == .timedOut {
+            print("❌ SimpleNetworkManager: All retry attempts timed out")
+            throw SimpleNetworkError.requestFailed(urlError)
+        }
+        
+        throw lastError ?? SimpleNetworkError.unknown
+    }
+    
     func makeRequest<T: Decodable>(url: String, method: String = "GET", body: Data? = nil) async throws -> T {
         guard let url = URL(string: url) else {
             throw SimpleNetworkError.invalidURL

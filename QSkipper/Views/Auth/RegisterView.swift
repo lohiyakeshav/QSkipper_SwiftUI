@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AuthenticationServices
 
 class RegisterViewModel: ObservableObject {
     @Published var email = ""
@@ -78,6 +79,176 @@ class RegisterViewModel: ObservableObject {
             self.isLoading = false
         }
     }
+    
+    @MainActor
+    func handleAppleSignIn(result: Result<ASAuthorization, Error>) async {
+        print("🍎🔄 RegisterView - Apple Sign Up Flow Started")
+        isLoading = true
+
+        switch result {
+        case .success(let authorization):
+            print("🍎✅ RegisterView - Received successful authorization from Apple")
+            if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
+                let userID = appleIDCredential.user
+                let email = appleIDCredential.email ?? ""
+                let fullName = [appleIDCredential.fullName?.givenName, appleIDCredential.fullName?.familyName]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+                let identityToken = appleIDCredential.identityToken.flatMap { String(data: $0, encoding: .utf8) }
+
+                let realName = fullName.isEmpty ? "N/A" : fullName
+                
+                print("""
+                🍎📋 RegisterView - APPLE SIGN UP CREDENTIALS:
+                ==========================================
+                🆔 User ID: \(userID)
+                📧 Email: \(email.isEmpty ? "Not provided" : email)
+                👤 Full Name: \(realName)
+                🔑 Identity Token Present: \(identityToken != nil ? "YES - \(identityToken!.count) chars" : "NO")
+                ==========================================
+                """)
+
+                do {
+                    var success = false
+                    
+                    if let identityToken = identityToken {
+                        print("🍎🌐 RegisterView - Attempting server registration with Apple identity token")
+                        do {
+                            let userParam = fullName.isEmpty ? userID : fullName
+                            print("🍎🌐 RegisterView - Calling registerWithApple with identity token and user: \(userParam)")
+                            
+                            // CRITICAL: Save the user's real email if provided by Apple (first-time sign-up only)
+                            if !email.isEmpty {
+                                print("🍎📧 RegisterView - Received REAL EMAIL from Apple: \(email) - saving for future use")
+                                UserDefaults.standard.set(email, forKey: "apple_real_email_\(userID)")
+                            }
+                            
+                            // CRITICAL: Save the user's real name if provided by Apple (first-time sign-up only)
+                            if !fullName.isEmpty {
+                                print("🍎👤 RegisterView - Received REAL NAME from Apple: \(fullName) - saving for future use")
+                                UserDefaults.standard.set(fullName, forKey: "apple_real_name_\(userID)")
+                            }
+                            
+                            success = try await NetworkUtils().registerWithApple(
+                                identityToken: identityToken,
+                                user: userParam
+                            )
+                            
+                            print("🍎🌐 RegisterView - Server registration result: \(success ? "SUCCESS" : "FAILED")")
+                        } catch {
+                            print("🍎❌ RegisterView - Server registration ERROR: \(error.localizedDescription)")
+                            success = false
+                        }
+                    } else {
+                        print("🍎⚠️ RegisterView - No identity token available, cannot proceed with server registration")
+                    }
+                    
+                    // If server registration failed, fall back to local registration
+                    if !success {
+                        print("🍎💾 RegisterView - Falling back to local registration")
+                        
+                        // Try to get the previously stored real email for this Apple ID
+                        let storedRealEmail = UserDefaults.standard.string(forKey: "apple_real_email_\(userID)")
+                        
+                        // Create user with best available information
+                        let userEmail: String
+                        if !email.isEmpty {
+                            // Use the email from this registration if provided
+                            userEmail = email
+                            print("🍎📧 RegisterView - Using email from current sign-up: \(userEmail)")
+                        } else if let stored = storedRealEmail, !stored.isEmpty {
+                            // Use previously stored email if available
+                            userEmail = stored
+                            print("🍎📧 RegisterView - Using previously stored email: \(userEmail)")
+                        } else {
+                            // Fallback to generated email
+                            userEmail = "apple_user_\(userID)@example.com"
+                            print("🍎📧 RegisterView - Using generated email: \(userEmail)")
+                        }
+                        
+                        // Try to get the previously stored real name for this Apple ID
+                        let storedRealName = UserDefaults.standard.string(forKey: "apple_real_name_\(userID)")
+                        
+                        // Format user name appropriately
+                        let userName: String
+                        if !fullName.isEmpty {
+                            // Use the fullName from Apple if available
+                            userName = fullName
+                            print("🍎💾 RegisterView - Using Apple-provided name: \(userName)")
+                        } else if let stored = storedRealName, !stored.isEmpty {
+                            // Use previously stored real name if available
+                            userName = stored
+                            print("🍎💾 RegisterView - Using previously stored real name: \(userName)")
+                        } else if userID.contains(".") && userID.contains("0") && userID.count > 20 {
+                            // If userID is an Apple ID format, use a generic name
+                            userName = "Apple User"
+                            print("🍎💾 RegisterView - Using generic name as userID appears to be Apple ID format")
+                        } else {
+                            // Last resort - extract from email or use generic
+                            userName = (email.components(separatedBy: "@").first ?? "Apple User")
+                            print("🍎💾 RegisterView - Using name derived from email: \(userName)")
+                        }
+                        
+                        let user = User(
+                            id: userID,
+                            email: userEmail,
+                            name: userName,
+                            phone: nil,
+                            token: identityToken ?? "apple_token_\(UUID().uuidString)"
+                        )
+                        
+                        print("""
+                        🍎💾 RegisterView - SAVING LOCAL USER DATA:
+                        ==========================================
+                        🆔 ID: \(user.id)
+                        📧 Email: \(user.email)
+                        👤 Name: \(user.name ?? "nil")
+                        🔑 Token Length: \(user.token?.count ?? 0) chars
+                        ==========================================
+                        """)
+                        
+                        UserDefaultsManager.shared.saveUser(user)
+                        print("🍎💾 RegisterView - User data saved to UserDefaults")
+                        
+                        AuthManager.shared.isLoggedIn = true
+                        print("🍎💾 RegisterView - isLoggedIn set to TRUE")
+                        
+                        success = true
+                    }
+                    
+                    self.isLoading = false
+
+                    if success {
+                        print("🍎✅ RegisterView - Apple registration successful, navigating to location")
+                        self.navigateToLocation = true
+                    } else {
+                        print("🍎❌ RegisterView - Apple registration failed, showing error")
+                        self.errorMessage = "Failed to register with Apple. Please try again."
+                        self.showError = true
+                    }
+                } catch {
+                    print("🍎❌ RegisterView - Error during Apple registration: \(error.localizedDescription)")
+                    print("🍎❌ Error details: \(error)")
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                    self.isLoading = false
+                }
+            } else {
+                print("🍎❌ RegisterView - Failed to get Apple credentials - no ASAuthorizationAppleIDCredential found")
+                self.errorMessage = "Failed to get Apple credentials"
+                self.showError = true
+                self.isLoading = false
+            }
+        case .failure(let error):
+            print("🍎❌ RegisterView - Apple Sign Up ERROR: \(error.localizedDescription)")
+            print("🍎❌ Detailed error information: \(error)")
+            self.errorMessage = "Failed to sign up with Apple: \(error.localizedDescription)"
+            self.showError = true
+            self.isLoading = false
+        }
+    }
+
+
     
     private func validateInputs() -> Bool {
         // Check if email is valid
@@ -276,9 +447,38 @@ struct RegisterView: View {
                 focusedField = nil
             }
             
-            // Login Link
+            // Sign in with Apple - Bottom Section
             VStack {
                 Spacer()
+                
+                VStack(spacing: 15) {
+                    /* Commented out Divider and OR text
+                    Divider()
+                    
+                    Text("OR")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                        .padding(.vertical, 5)
+                    */
+                    
+                    /* Commented out Sign up with Apple
+                    SignInWithAppleButton(.signUp) { request in
+                        request.requestedScopes = [.fullName, .email]
+                    } onCompletion: { result in
+                        Task {
+                            await viewModel.handleAppleSignIn(result: result)
+                        }
+                    }
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(height: 50)
+                    .cornerRadius(8)
+                    .padding(.horizontal, 20)
+                    */
+                }
+                .padding(.bottom, 10)
+                .opacity(animateContent ? 1 : 0)
+                
+                // Login Link
                 HStack {
                     Text("Already have an account?")
                         .font(.system(size: 16))
@@ -309,6 +509,13 @@ struct RegisterView: View {
                     }
                 }, isRegistration: true),
                 isActive: $viewModel.otpSent,
+                label: { EmptyView() }
+            )
+        )
+        .background(
+            NavigationLink(
+                destination: LocationView().navigationBarBackButtonHidden(true),
+                isActive: $viewModel.navigateToLocation,
                 label: { EmptyView() }
             )
         )

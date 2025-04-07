@@ -70,18 +70,24 @@ struct UserOrdersView: View {
                     .refreshable {
                         // Pull to refresh functionality
                         print("🔄 Pull-to-refresh triggered")
-                        viewModel.fetchOrders()
+                        Task {
+                            await viewModel.fetchOrders()
+                        }
                     }
                 }
             }
             .navigationBarHidden(true)
             .onAppear {
-                viewModel.fetchOrders()
+                Task {
+                    await viewModel.fetchOrders()
+                }
             }
             .onChange(of: tabSelection.selectedTab) { newTab in
                 if newTab == .orders {
                     print("📱 Orders tab selected, refreshing data")
-                    viewModel.fetchOrders()
+                    Task {
+                        await viewModel.fetchOrders()
+                    }
                 }
             }
         }
@@ -510,142 +516,107 @@ class UserOrdersViewModel: ObservableObject {
     @Published var restaurantDetails: [String: Restaurant] = [:]
     @Published var allRestaurants: [Restaurant] = []
     
-    func fetchOrders() {
-        isLoading = true
+    func fetchOrders() async {
+        await MainActor.run { isLoading = true }
         
-        guard let userId = AuthManager.shared.getCurrentUserId() else {
+        // Get user ID via MainActor
+        let userId = await MainActor.run { AuthManager.shared.getCurrentUserId() }
+        guard let userId = userId else {
             print("🚫 No user ID found")
-            isLoading = false
+            await MainActor.run { isLoading = false }
             return
         }
         
         // Fetch all restaurants first to ensure we have restaurant data
-        Task {
-            await fetchAllRestaurants()
-        }
+        await fetchAllRestaurants()
         
         let urlString = "https://qskipperbackend.onrender.com/get-UserOrder/\(userId)"
         
         guard let url = URL(string: urlString) else {
             print("🚫 Invalid URL")
-            isLoading = false
+            await MainActor.run { isLoading = false }
             return
         }
         
         print("📤 Fetching orders for user: \(userId)")
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            
+            // Parse the array directly since response is an array at the top level
+            let orderResponses = try JSONDecoder().decode([OrderResponseDTO].self, from: data)
+            print("✅ Successfully parsed \(orderResponses.count) orders")
+            
+            await processOrdersResponse(orderResponses)
+        } catch {
+            print("❌ Error fetching orders: \(error)")
+            await MainActor.run { isLoading = false }
+        }
+    }
+    
+    private func processOrdersResponse(_ orderResponses: [OrderResponseDTO]) async {
+        // Process on the main actor
+        await MainActor.run {
+            // Map from DTOs to domain models with restaurant names
+            self.orders = orderResponses.map { dto in
+                let restaurantId = dto.resturant
                 
-                if let error = error {
-                    print("❌ Error fetching orders: \(error)")
-                    self.isLoading = false
-                    return
+                // Try multiple sources for restaurant details, with better logging
+                var restaurant: Restaurant? = self.allRestaurants.first(where: { $0.id == restaurantId })
+                if restaurant == nil {
+                    restaurant = self.restaurantDetails[restaurantId]
                 }
                 
-                guard let data = data else {
-                    print("❌ No data received")
-                    self.isLoading = false
-                    return
+                let restaurantName = restaurant?.name ?? "Restaurant"
+                let location = restaurant?.location ?? "Location unavailable"
+                
+                print("🔄 Mapping order for restaurant: \(restaurantName) (ID: \(restaurantId))")
+                
+                // Create order items
+                let items = dto.items.map { item in
+                    UserOrderItem(
+                        id: item._id,
+                        productId: item.productId,
+                        name: item.name,
+                        quantity: item.quantity,
+                        price: item.price
+                    )
                 }
                 
-                do {
-                    // Parse the array directly since response is an array at the top level
-                    let orderResponses = try JSONDecoder().decode([OrderResponseDTO].self, from: data)
-                    print("✅ Successfully parsed \(orderResponses.count) orders")
-                    
-                    // First, fetch all restaurant details
-                    let restaurantIds = Set(orderResponses.map { $0.resturant })
-                    let group = DispatchGroup()
-                    
-                    for restaurantId in restaurantIds {
-                        group.enter()
-                        self.fetchRestaurantDetails(for: restaurantId) { _ in
-                            group.leave()
-                        }
+                // Parse dates using our flexible helper method
+                let orderTime = self.parseISO8601Date(from: dto.Time) ?? Date()
+                
+                var scheduleDate: Date? = nil
+                if let scheduleDateString = dto.scheduleDate {
+                    print("📅 Found scheduled date string: \(scheduleDateString)")
+                    scheduleDate = self.parseISO8601Date(from: scheduleDateString)
+                    if let parsedDate = scheduleDate {
+                        print("✅ Successfully parsed scheduled date: \(parsedDate)")
+                    } else {
+                        print("❌ Failed to parse scheduled date from: \(scheduleDateString)")
                     }
-                    
-                    // When all restaurant details are loaded, then create the orders
-                    group.notify(queue: .main) {
-                        // Map from DTOs to domain models with restaurant names
-                        self.orders = orderResponses.map { dto in
-                            let restaurantId = dto.resturant
-                            
-                            // Try multiple sources for restaurant details, with better logging
-                            var restaurant: Restaurant? = self.allRestaurants.first(where: { $0.id == restaurantId })
-                            if restaurant == nil {
-                                restaurant = self.restaurantDetails[restaurantId]
-                            }
-                            
-                            let restaurantName = restaurant?.name ?? "Restaurant"
-                            let location = restaurant?.location ?? "Location unavailable"
-                            
-                            print("🔄 Mapping order for restaurant: \(restaurantName) (ID: \(restaurantId))")
-                            
-                            // Create order items
-                            let items = dto.items.map { item in
-                                UserOrderItem(
-                                    id: item._id,
-                                    productId: item.productId,
-                                    name: item.name,
-                                    quantity: item.quantity,
-                                    price: item.price
-                                )
-                            }
-                            
-                            // Parse dates using our flexible helper method
-                            let orderTime = self.parseISO8601Date(from: dto.Time) ?? Date()
-                            
-                            var scheduleDate: Date? = nil
-                            if let scheduleDateString = dto.scheduleDate {
-                                print("📅 Found scheduled date string: \(scheduleDateString)")
-                                scheduleDate = self.parseISO8601Date(from: scheduleDateString)
-                                if let parsedDate = scheduleDate {
-                                    print("✅ Successfully parsed scheduled date: \(parsedDate)")
-                                } else {
-                                    print("❌ Failed to parse scheduled date from: \(scheduleDateString)")
-                                }
-                            }
-                            
-                            // Special handling for known order with schedule date
-                            if dto._id == "67ed822ec992409f659f920b" && scheduleDate == nil {
-                                print("⚠️ Known scheduled order detected but failed to parse date")
-                                print("📋 Order details: \(dto)")
-                                // Force create a scheduled date for this order
-                                let manualDateFormatter = DateFormatter()
-                                manualDateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-                                manualDateFormatter.timeZone = TimeZone(abbreviation: "UTC")
-                                scheduleDate = manualDateFormatter.date(from: "2025-04-03T11:00:00.000Z")
-                                print("🔧 Manually set schedule date: \(String(describing: scheduleDate))")
-                            }
-                            
-                            // We'll query for rating in a real app, using nil for now
-                            return UserOrder(
-                                id: dto._id,
-                                restaurantId: restaurantId,
-                                userID: dto.userID,
-                                items: items,
-                                totalAmount: dto.totalAmount,
-                                status: dto.status,
-                                cookTime: dto.cookTime,
-                                takeAway: dto.takeAway,
-                                time: orderTime,
-                                scheduleDate: scheduleDate,
-                                restaurantName: restaurantName,
-                                restaurantLocation: location,
-                                rating: nil // No mock rating, should come from real API
-                            )
-                        }
-                        
-                        self.isLoading = false
-                    }
-                } catch {
-                    print("❌ Error decoding orders: \(error)")
-                    self.isLoading = false
                 }
+                
+                // We'll query for rating in a real app, using nil for now
+                return UserOrder(
+                    id: dto._id,
+                    restaurantId: restaurantId,
+                    userID: dto.userID,
+                    items: items,
+                    totalAmount: dto.totalAmount,
+                    status: dto.status,
+                    cookTime: dto.cookTime,
+                    takeAway: dto.takeAway,
+                    time: orderTime,
+                    scheduleDate: scheduleDate,
+                    restaurantName: restaurantName,
+                    restaurantLocation: location,
+                    rating: nil // No mock rating, should come from real API
+                )
             }
-        }.resume()
+            
+            self.isLoading = false
+        }
     }
     
     func fetchAllRestaurants() async {

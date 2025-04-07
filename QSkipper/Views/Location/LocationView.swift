@@ -98,6 +98,7 @@ struct LocationView: View {
             VStack(spacing: 16) {
                 // Use current location
                 QButton(title: "Use Current Location") {
+                    print("📍 LocationView - 'Use Current Location' button tapped")
                     // We've already fetched the current location automatically
                     // Just navigate to home
                     navigateToHome = true
@@ -105,6 +106,7 @@ struct LocationView: View {
                 
                 // Use Galgotias University location
                 QButton(title: "Use Galgotias University", style: .outline) {
+                    print("📍 LocationView - 'Use Galgotias University' button tapped")
                     locationManager.useDefaultLocation()
                     navigateToHome = true
                 }
@@ -113,16 +115,28 @@ struct LocationView: View {
             .padding(.bottom, 30)
         }
         .onAppear {
+            print("📍 LocationView - onAppear triggered")
             locationManager.requestLocation()
         }
         .navigationBarBackButtonHidden(true)
         .background(
             NavigationLink(
                 destination: HomeView().navigationBarBackButtonHidden(true),
-                isActive: $navigateToHome,
+                isActive: Binding(
+                    get: { navigateToHome },
+                    set: { 
+                        print("🔀 NavigateToHome binding changed to: \($0)")
+                        navigateToHome = $0 
+                    }
+                ),
                 label: { EmptyView() }
             )
         )
+        .onChange(of: navigateToHome) { newValue in
+            if newValue {
+                print("📍→🏠 LocationView - Navigating to HomeView")
+            }
+        }
     }
 }
 

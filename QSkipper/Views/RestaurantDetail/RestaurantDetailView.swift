@@ -5,6 +5,7 @@ struct RestaurantDetailView: View {
     @StateObject private var viewModel = RestaurantDetailViewModel()
     @EnvironmentObject private var orderManager: OrderManager
     @EnvironmentObject private var favoriteManager: FavoriteManager
+    @EnvironmentObject private var tabSelection: TabSelection
     @Environment(\.presentationMode) var presentationMode
     @State private var selectedCategory: String? = nil
     @State private var showCartSheet = false
@@ -65,6 +66,7 @@ struct RestaurantDetailView: View {
             )
             .environmentObject(orderManager)
             .environmentObject(favoriteManager)
+            .environmentObject(tabSelection)
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
@@ -119,7 +121,7 @@ struct RestaurantDetailView: View {
                 // Cart Button
                 NavigationLink(destination: CartView()
                     .environmentObject(orderManager)
-                    .environmentObject(TabSelection.shared)) {
+                    .environmentObject(tabSelection)) {
                     ZStack(alignment: .topTrailing) {
                         Circle()
                             .fill(AppColors.primaryGreen.opacity(0.1))

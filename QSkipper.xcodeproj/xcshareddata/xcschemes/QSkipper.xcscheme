@@ -51,7 +51,7 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <StoreKitConfigurationFileReference
-         identifier = "../../QSkipper/Configuration/QSkipper_StoreKit.storekit">
+         identifier = "../../QSkipper_StoreKit.storekit">
       </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction

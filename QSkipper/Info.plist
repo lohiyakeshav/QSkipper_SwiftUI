@@ -24,6 +24,10 @@
 	<string>QSkipper needs your location to find nearby restaurants and deliver food to your current location.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>QSkipper needs your location to find nearby restaurants and deliver food to your current location.</string>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

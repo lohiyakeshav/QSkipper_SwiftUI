@@ -10,6 +10,7 @@ import SwiftUI
 struct MyOrdersView: View {
     @StateObject private var viewModel = MyOrdersViewModel()
     @EnvironmentObject private var orderManager: OrderManager
+    @EnvironmentObject private var tabSelection: TabSelection
     
     var body: some View {
         NavigationView {
@@ -28,7 +29,7 @@ struct MyOrdersView: View {
                         // Cart button
                         NavigationLink(destination: CartView()
                             .environmentObject(orderManager)
-                            .environmentObject(TabSelection.shared)) {
+                            .environmentObject(tabSelection)) {
                             ZStack(alignment: .topTrailing) {
                                 Circle()
                                     .fill(AppColors.primaryGreen.opacity(0.1))

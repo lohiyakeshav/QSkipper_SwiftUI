@@ -184,6 +184,7 @@ struct ProfileView: View {
     // MARK: - Logout Button
     private var logoutButton: some View {
         Button {
+            // Show confirmation dialog
             showLogoutConfirmation = true
         } label: {
             HStack {

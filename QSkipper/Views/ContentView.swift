@@ -13,18 +13,54 @@ struct ContentView: View {
             } else if authManager.isLoggedIn {
                 // Main app content when authenticated
                 HomeView()
+                    .onAppear {
+                        print("🔐 ContentView - User authenticated, displaying HomeView")
+                        print("🔐 User data: ID=\(authManager.getCurrentUserId() ?? "nil"), Name=\(authManager.getCurrentUserName() ?? "nil")")
+                    }
             } else {
                 // Login screen when not authenticated
                 StartView()
+                    .onAppear {
+                        print("🔓 ContentView - User not authenticated, displaying StartView")
+                    }
             }
         }
         .onAppear {
+            print("📱 ContentView - onAppear triggered")
+            
+            // Check if we have valid user data
+            let userId = authManager.getCurrentUserId()
+            let userName = authManager.getCurrentUserName()
+            let userEmail = authManager.getCurrentUserEmail()
+            
+            print("""
+            📱 ContentView - User data check:
+            - User ID: \(userId ?? "nil")
+            - User Name: \(userName ?? "nil")
+            - User Email: \(userEmail ?? "nil")
+            - isLoggedIn: \(authManager.isLoggedIn)
+            """)
+            
+            // If isLoggedIn is true but we're missing crucial user data, force logout
+            if authManager.isLoggedIn && (userId == nil || userName == nil) {
+                print("⚠️ ContentView - Logged in but missing user data, forcing logout")
+                authManager.logout()
+            }
+            
+            print("📱 Authentication state after check: isLoggedIn=\(authManager.isLoggedIn)")
+            
             // Display splash screen for 2 seconds before showing main content
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                print("📱 ContentView - Splash screen timeout, updating UI")
+                print("📱 Authentication state before update: isLoggedIn=\(authManager.isLoggedIn)")
+                
                 withAnimation {
                     isLoading = false
                 }
             }
+        }
+        .onChange(of: authManager.isLoggedIn) { newValue in
+            print("🔄 ContentView - Authentication state changed to: \(newValue)")
         }
     }
     

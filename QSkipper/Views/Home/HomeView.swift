@@ -170,6 +170,7 @@ struct HomeView: View {
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var orderManager = OrderManager.shared
     @StateObject private var favoriteManager = FavoriteManager.shared
+    @StateObject private var tabSelection = TabSelection.shared
     @State private var showLocationPicker = false
     @State private var isLoadingLocation = false
     @State private var selectedTab: Tab = .home
@@ -269,7 +270,7 @@ struct HomeView: View {
         .background(
             NavigationLink(destination: CartView()
                 .environmentObject(orderManager)
-                .environmentObject(TabSelection.shared), isActive: $showCartSheet) {
+                .environmentObject(tabSelection), isActive: $showCartSheet) {
                 EmptyView()
             }
         )
@@ -317,6 +318,10 @@ struct HomeView: View {
                     TabSelection.shared.selectedTab = .home
                 }
             }
+            
+            print("🏠 HomeView - onAppear triggered")
+            print("🏠 User authentication state: isLoggedIn=\(AuthManager.shared.isLoggedIn)")
+            print("🏠 User data: ID=\(AuthManager.shared.getCurrentUserId() ?? "nil"), Name=\(AuthManager.shared.getCurrentUserName() ?? "nil")")
         }
         .onDisappear {
             print("📱 HomeView: View disappeared")
@@ -420,7 +425,7 @@ struct HomeView: View {
                         
                         NavigationLink(destination: CartView()
                             .environmentObject(orderManager)
-                            .environmentObject(TabSelection.shared)) {
+                            .environmentObject(tabSelection)) {
                             ZStack(alignment: .topTrailing) {
                                 Circle()
                                     .fill(AppColors.primaryGreen.opacity(0.1))
@@ -533,6 +538,7 @@ struct HomeView: View {
                             TopPickCard(product: product, restaurant: viewModel.getRestaurantForProduct(product))
                                 .environmentObject(orderManager)
                                 .environmentObject(favoriteManager)
+                                .environmentObject(tabSelection)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -658,6 +664,9 @@ struct HomeView: View {
                 LazyVStack(spacing: 15) {
                     ForEach(filteredRestaurants) { restaurant in
                         RestaurantCard(restaurant: restaurant)
+                            .environmentObject(orderManager)
+                            .environmentObject(favoriteManager)
+                            .environmentObject(tabSelection)
                             .padding(.horizontal, 20)
                     }
                 }
@@ -787,9 +796,13 @@ struct TopPickCard: View {
     let restaurant: Restaurant
     @EnvironmentObject var orderManager: OrderManager
     @EnvironmentObject var favoriteManager: FavoriteManager
+    @EnvironmentObject var tabSelection: TabSelection
     
     var body: some View {
-        NavigationLink(destination: RestaurantDetailView(restaurant: restaurant)) {
+        NavigationLink(destination: RestaurantDetailView(restaurant: restaurant)
+            .environmentObject(orderManager)
+            .environmentObject(favoriteManager)
+            .environmentObject(tabSelection)) {
             VStack(alignment: .leading) {
                 // Product Image
                 ZStack(alignment: .topTrailing) {
@@ -850,9 +863,15 @@ struct TopPickCard: View {
 // RestaurantCard - Card component for displaying a restaurant in the all restaurants section
 struct RestaurantCard: View {
     let restaurant: Restaurant
+    @EnvironmentObject var orderManager: OrderManager
+    @EnvironmentObject var favoriteManager: FavoriteManager
+    @EnvironmentObject var tabSelection: TabSelection
     
     var body: some View {
-        NavigationLink(destination: RestaurantDetailView(restaurant: restaurant)) {
+        NavigationLink(destination: RestaurantDetailView(restaurant: restaurant)
+            .environmentObject(orderManager)
+            .environmentObject(favoriteManager)
+            .environmentObject(tabSelection)) {
             VStack(alignment: .leading, spacing: 0) {
                 // Restaurant Image
                 ZStack(alignment: .bottomLeading) {

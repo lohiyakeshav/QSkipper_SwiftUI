@@ -10,7 +10,7 @@ class StoreKitManager: ObservableObject {
     @Published private(set) var purchasedProductIdentifiers = Set<String>()
     
     // MARK: - Constants
-    private let orderPaymentProductID = "com.qskipper.orderpayment"
+    private let orderPaymentProductID = "com.qskipper.premium"
     private let walletTopUpProductID = "com.queueskipper.wallet.10000"
     private var hasLoadedProducts = false
     private var updateListenerTask: Task<Void, Error>? = nil
@@ -89,8 +89,6 @@ class StoreKitManager: ObservableObject {
         if let amount = customAmount {
             self.customAmount = amount
             print("🛍️ StoreKitManager: Using custom amount: \(amount) instead of standard price: \(product.price)")
-            
-            // Store the custom price for this product
             customPrices[product.id] = amount
         } else {
             self.customAmount = nil
@@ -101,7 +99,6 @@ class StoreKitManager: ObservableObject {
         
         do {
             print("🛍️ StoreKitManager: Calling product.purchase() - StoreKit UI should appear")
-            // Request payment using StoreKit's native payment sheet
             let result = try await product.purchase()
             
             print("🛍️ StoreKitManager: Purchase() returned with result: \(result)")
@@ -122,8 +119,7 @@ class StoreKitManager: ObservableObject {
                         throw StoreKitError.verificationFailed
                     }
                     
-                    // Finish the transaction to inform StoreKit that delivery was completed
-                    // This is crucial for consumable purchases to be purchasable again
+                    // Finish the transaction
                     await transaction.finish()
                     print("✅ StoreKitManager: Transaction marked as finished")
                     

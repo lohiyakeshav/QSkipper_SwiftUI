@@ -653,15 +653,6 @@ struct LoginView: View {
                 label: { EmptyView() }
             )
         )
-        // Add toolbar to help with keyboard dismissal
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    isFieldFocused = false
-                }
-            }
-        }
         .onAppear {
             print("📱 LoginView appeared")
             print("📱 Checking Apple Sign In availability")

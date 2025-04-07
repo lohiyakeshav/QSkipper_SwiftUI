@@ -108,39 +108,25 @@ class CartViewController: ObservableObject {
             print("🔄 CartViewController: Starting place order process...")
             self.isProcessing = true
             
-            // Get user ID using UserDefaultsManager
-            guard let userId = UserDefaultsManager.shared.getUserId() else {
-                print("❌ CartViewController: Failed to get user ID for order")
-                print("📱 Current UserDefaults state:")
-                print("   - User ID: \(UserDefaultsManager.shared.getUserId() ?? "nil")")
-                print("   - User Email: \(UserDefaultsManager.shared.getUserEmail() ?? "nil")")
-                print("   - User Name: \(UserDefaultsManager.shared.getUserName() ?? "nil")")
-                print("   - Is Logged In: \(UserDefaultsManager.shared.isUserLoggedIn())")
+            // Validate user
+            guard let userId = UserDefaultsManager.shared.getUserId(),
+                  let firstItem = orderManager.currentCart.first else {
+                print("❌ Missing user or cart data.")
                 self.isProcessing = false
                 return
             }
-            print("✅ CartViewController: User ID found: \(userId)")
-            
-            // Get restaurant ID from first cart item
-            guard let firstItem = orderManager.currentCart.first else {
-                print("❌ CartViewController: Error: Cart is empty")
-                self.isProcessing = false
-                return
-            }
-            
+
             let restaurantId = firstItem.product.restaurantId
-            print("✅ CartViewController: Restaurant ID from first item: \(restaurantId)")
-            
-            // Create order request
+
             let orderRequest = PlaceOrderRequest(
                 userId: userId,
                 restaurantId: restaurantId,
-                items: orderManager.currentCart.map { cartItem in
+                items: orderManager.currentCart.map {
                     OrderItem(
-                        productId: cartItem.productId,
-                        quantity: cartItem.quantity,
-                        price: cartItem.product.price,
-                        productName: cartItem.product.name
+                        productId: $0.productId,
+                        quantity: $0.quantity,
+                        price: $0.product.price,
+                        productName: $0.product.name
                     )
                 },
                 totalAmount: getTotalAmount(),
@@ -149,79 +135,56 @@ class CartViewController: ObservableObject {
                 specialInstructions: nil
             )
             
-            // Log request details
-            print("📤 CartViewController: Order Request Details:")
-            print("   - User ID: \(orderRequest.userId)")
-            print("   - Restaurant ID: \(orderRequest.restaurantId)")
-            print("   - Total Amount: \(orderRequest.totalAmount)")
-            print("   - Number of Items: \(orderRequest.items.count)")
-            print("   - Order Type: \(orderRequest.orderType)")
-            if let scheduledTime = orderRequest.scheduledTime {
-                print("   - Scheduled Time: \(scheduledTime)")
-            }
-            
-            // Save the order request
             self.currentOrderRequest = orderRequest
-            print("✅ CartViewController: Order request set")
-            
-            // Process with StoreKit directly
-            // Use the order payment product which should be configured as a consumable
-            if let orderProduct = StoreKitManager.shared.getProduct(byID: "com.qskipper.orderpayment") {
-                print("✅ CartViewController: Found StoreKit product for payment")
-                
-                do {
-                    print("🔄 CartViewController: Initiating StoreKit purchase...")
-                    try await StoreKitManager.shared.processPayment(for: orderProduct)
-                    
-                    print("✅ CartViewController: Payment successful!")
-                    
-                    do {
-                        // Submit the order to the appropriate API endpoint
+
+            // 🔐 Sandbox: Use StoreKit2 to simulate payment
+            guard let orderProduct = StoreKitManager.shared.getProduct(byID: "com.qskipper.premium") else {
+                print("❌ StoreKit product not found.")
+                self.isProcessing = false
+                self.showPaymentView = true
+                return
+            }
+
+            do {
+                print("🧪 StoreKit: Attempting to purchase in sandbox...")
+                let result = try await orderProduct.purchase()
+
+                switch result {
+                case .success(let verification):
+                    switch verification {
+                    case .unverified(_, let error):
+                        print("⚠️ Transaction unverified: \(error.localizedDescription)")
+                        self.isProcessing = false
+                        return
+
+                    case .verified(let transaction):
+                        print("✅ StoreKit transaction verified!")
+                        print("   - Transaction ID: \(transaction.id)")
+                        print("   - Product ID: \(transaction.productID)")
+                        
+                        await transaction.finish()
+                        
                         try await submitOrderToAPI(orderRequest: orderRequest)
-                        
-                        // Success is already handled in submitOrderToAPI
-                    } catch let apiError as OrderAPIError {
-                        print("❌ CartViewController: Order API error: \(apiError.message)")
-                        
-                        // Check if we have response data we can recover from
-                        if case .invalidData(let responseData) = apiError,
-                           let responseString = String(data: responseData, encoding: .utf8) {
-                            
-                            let cleanedText = responseString.trimmingCharacters(in: .whitespacesAndNewlines)
-                                                          .replacingOccurrences(of: "\"", with: "")
-                            
-                            // If it looks like a MongoDB ObjectId (24 hex characters), treat as success
-                            if cleanedText.count == 24 && cleanedText.range(of: "^[0-9a-f]+$", options: .regularExpression) != nil {
-                                print("✅ CartViewController: Found valid order ID in error response: \(cleanedText)")
-                                
-                                // Show success message
-                                self.orderId = cleanedText
-                                showOrderSuccess = true
-                                isProcessing = false
-                                
-                                // Clear the cart
-                                orderManager.clearCart()
-                                return
-                            }
-                        }
-                        
-                        // If we couldn't recover, show error
-                        isProcessing = false
-                    } catch {
-                        print("❌ CartViewController: Order submission failed: \(error.localizedDescription)")
-                        isProcessing = false
                     }
-                } catch StoreKitError.userCancelled {
-                    print("❌ CartViewController: Payment cancelled by user")
-                    isProcessing = false
-                } catch {
-                    print("❌ CartViewController: Payment failed: \(error.localizedDescription)")
-                    isProcessing = false
+
+                case .userCancelled:
+                    print("🚫 Payment cancelled by user.")
+                    self.isProcessing = false
+                    return
+
+                case .pending:
+                    print("⏳ Payment is pending...")
+                    self.isProcessing = false
+                    return
+
+                @unknown default:
+                    print("❓ Unknown result during purchase.")
+                    self.isProcessing = false
+                    return
                 }
-            } else {
-                print("❌ CartViewController: StoreKit product not found")
-                isProcessing = false
-                showPaymentView = true // Fallback to the original flow
+            } catch {
+                print("❌ StoreKit purchase failed: \(error.localizedDescription)")
+                self.isProcessing = false
             }
         }
     }
